@@ -2,6 +2,9 @@
 pub mod irqchip;
 pub mod serial;
 
+// #[cfg(all(feature = "dtb", feature = "numa"))]
+pub mod numa;
+
 #[cfg(dtb)]
 use crate::dtb::irqchip::IrqCell;
 use crate::startup::memory::{register_memory_region, BootloaderMemoryKind};

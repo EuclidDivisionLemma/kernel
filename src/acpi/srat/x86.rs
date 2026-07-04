@@ -7,7 +7,7 @@ use crate::{
     acpi::srat::{to_usize, Srat, SratEntry},
     cpu_set,
     memory::{self, PAGE_SIZE},
-    numa::{self, NumaMemory},
+    numa::{self, assign_memory_id, NumaMemory},
 };
 
 #[inline(always)]
@@ -86,7 +86,7 @@ pub fn init_srat<A: Arch>(
     memories.fill(NumaMemory {
         start: 0,
         length: 0,
-        dom: 0,
+        node_id: 0,
         _pad: [0; 4],
     });
 
@@ -129,10 +129,11 @@ pub fn init_srat<A: Arch>(
                     let node_id = numa::assign_node_id(true);
                     dom_node_map[dom as usize] = node_id as u32;
                 }
-                memories[dom_node_map[dom as usize] as usize] = numa::NumaMemory {
+                let mem_id = assign_memory_id() as u32;
+                memories[mem_id as usize] = numa::NumaMemory {
                     start,
                     length,
-                    dom: dom_node_map[dom as usize],
+                    node_id: dom_node_map[dom as usize],
                     _pad: [0u8; 4],
                 };
             }
@@ -146,8 +147,7 @@ pub fn init_srat<A: Arch>(
                     let node_id = numa::assign_node_id(true);
                     dom_node_map[dom as usize] = node_id as u32;
                 }
-                cpus[dom_node_map[dom as usize] as usize] =
-                    processor_local_affinity.proximity_domain;
+                cpus[processor_local_affinity.x2apic_id as usize] = dom_node_map[dom as usize];
             }
             _ => continue,
         }
