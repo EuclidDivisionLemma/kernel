@@ -44,6 +44,8 @@ impl<A: Arch> BumpAllocator<A> {
 }
 
 unsafe impl<A: Arch> FrameAllocator for BumpAllocator<A> {
+    type O = PhysicalAddress;
+
     fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
         unsafe {
             let req_size = count.data() * A::PAGE_SIZE;

@@ -1,8 +1,8 @@
 use core::marker::PhantomData;
 
 use crate::{
-    Arch, FrameAllocator, FrameCount, PageEntry, PageFlags, PageFlush, PageTable, PhysicalAddress,
-    TableKind, VirtualAddress,
+    Arch, FrameAllocator, FrameAllocatorOutput, FrameCount, PageEntry, PageFlags, PageFlush,
+    PageTable, PhysicalAddress, TableKind, VirtualAddress,
 };
 
 pub struct PageMapper<A, F> {
@@ -118,7 +118,7 @@ impl<A: Arch, F> PageMapper<A, F> {
 impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
     pub unsafe fn create(table_kind: TableKind, mut allocator: F) -> Option<Self> {
         unsafe {
-            let table_addr = allocator.allocate_one()?;
+            let table_addr = allocator.allocate_one()?.physical_address();
             let mut table = Self::new(table_kind, table_addr, allocator);
 
             match (table_kind, A::KERNEL_SEPARATE_TABLE) {
@@ -129,7 +129,8 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
                         let phys = table
                             .allocator
                             .allocate_one()
-                            .expect("failed to map page table");
+                            .expect("failed to map page table")
+                            .physical_address();
                         let flags = A::ENTRY_FLAG_DEFAULT_TABLE;
                         table
                             .table()
@@ -177,7 +178,7 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
                 let next = match table.next(i) {
                     Some(some) => some,
                     None => {
-                        let next_phys = self.allocator.allocate_one()?;
+                        let next_phys = self.allocator.allocate_one()?.physical_address();
                         //TODO: correct flags?
                         let flags = A::ENTRY_FLAG_DEFAULT_TABLE
                             | if virt.kind() == TableKind::User {

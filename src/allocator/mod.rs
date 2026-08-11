@@ -1,5 +1,5 @@
 use crate::memory::{KernelMapper, Page, PageFlags, VirtualAddress};
-use rmm::{Flusher, FrameAllocator, PageFlushAll};
+use rmm::{Flusher, FrameAllocator, FrameAllocatorOutput, PageFlushAll};
 
 pub use self::linked_list::Allocator;
 mod linked_list;
@@ -21,7 +21,7 @@ unsafe fn map_heap(mapper: &mut KernelMapper<true>, offset: usize, size: usize) 
             mapper
                 .map_phys(
                     page.start_address(),
-                    phys,
+                    phys.physical_address(),
                     PageFlags::new()
                         .write(true)
                         .global(cfg!(not(feature = "pti"))),

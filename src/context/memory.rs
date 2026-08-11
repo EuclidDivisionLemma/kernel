@@ -10,9 +10,10 @@ use core::{
     mem::ManuallyDrop,
     num::NonZeroUsize,
     ops::{Bound, Deref},
+    slice::SliceIndex,
     sync::atomic::{AtomicU32, Ordering},
 };
-use rmm::{Arch as _, FrameAllocator, FrameCount, PageFlush};
+use rmm::{Arch as _, FrameAllocator, FrameAllocatorOutput, FrameCount, PageFlush};
 use smallvec::SmallVec;
 use syscall::{error::*, flag::MapFlags, GrantFlags, MunmapFlags, NumaMemoryPolicy};
 
@@ -24,7 +25,7 @@ use crate::{
         Page, PageFlags, PageInfo, PageMapper, RaiiFrame, RefCount, RefKind, RmmA, TableKind,
         TheFrameAllocator, VirtualAddress, PAGE_SIZE,
     },
-    numa,
+    numa::{self, NumaNode},
     percpu::PercpuBlock,
     scheme::{self, KernelSchemes},
     sync::{
@@ -1350,7 +1351,8 @@ impl Grant {
         let base = Frame::containing(
             frame_allocator
                 .allocate(FrameCount::new(count))
-                .ok_or(Enomem)?,
+                .ok_or(Enomem)?
+                .physical_address(),
         );
 
         for (i, page) in span.pages().enumerate() {

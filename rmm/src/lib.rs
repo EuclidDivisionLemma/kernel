@@ -30,6 +30,12 @@ pub enum TableKind {
 #[repr(transparent)]
 pub struct PhysicalAddress(usize);
 
+impl FrameAllocatorOutput for PhysicalAddress {
+    fn physical_address(&self) -> PhysicalAddress {
+        *self
+    }
+}
+
 impl PhysicalAddress {
     #[inline(always)]
     pub const fn new(address: usize) -> Self {

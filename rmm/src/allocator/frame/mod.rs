@@ -43,12 +43,18 @@ impl FrameUsage {
     }
 }
 
+pub trait FrameAllocatorOutput {
+    fn physical_address(&self) -> PhysicalAddress;
+}
+
 pub unsafe trait FrameAllocator {
-    fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress>;
+    type O: FrameAllocatorOutput;
+
+    fn allocate(&mut self, count: FrameCount) -> Option<Self::O>;
 
     unsafe fn free(&mut self, address: PhysicalAddress, count: FrameCount);
 
-    fn allocate_one(&mut self) -> Option<PhysicalAddress> {
+    fn allocate_one(&mut self) -> Option<Self::O> {
         self.allocate(FrameCount::new(1))
     }
 
@@ -61,17 +67,19 @@ pub unsafe trait FrameAllocator {
     fn usage(&self) -> FrameUsage;
 }
 
-unsafe impl<T> FrameAllocator for &mut T
+unsafe impl<T, V: FrameAllocatorOutput> FrameAllocator for &mut T
 where
-    T: FrameAllocator,
+    T: FrameAllocator<O = V>,
 {
-    fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
+    type O = V;
+
+    fn allocate(&mut self, count: FrameCount) -> Option<Self::O> {
         T::allocate(self, count)
     }
     unsafe fn free(&mut self, address: PhysicalAddress, count: FrameCount) {
         unsafe { T::free(self, address, count) }
     }
-    fn allocate_one(&mut self) -> Option<PhysicalAddress> {
+    fn allocate_one(&mut self) -> Option<Self::O> {
         T::allocate_one(self)
     }
     unsafe fn free_one(&mut self, address: PhysicalAddress) {

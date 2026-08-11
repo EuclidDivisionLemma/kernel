@@ -173,6 +173,8 @@ impl<A: Arch> BuddyAllocator<A> {
 }
 
 unsafe impl<A: Arch> FrameAllocator for BuddyAllocator<A> {
+    type O = PhysicalAddress;
+
     fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
         unsafe {
             if self.table_virt.data() == 0 {

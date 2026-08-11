@@ -21,7 +21,7 @@ use crate::{
         memory::{AccessMode, AddrSpace, PfError},
     },
     kernel_executable_offsets::{__usercopy_end, __usercopy_start},
-    numa::{self, FreeListMask},
+    numa::{self, FreeListMask, NumaNode},
     sync::CleanLockToken,
     syscall::error::{Error, ENOMEM},
 };
@@ -74,10 +74,17 @@ pub fn total_frames() -> usize {
     sections().iter().map(|section| section.frames.len()).sum()
 }
 
-pub fn allocate_p2frame_with_mask(mask: FreeListMask, order: u32, fallback: bool) -> Option<Frame> {
+pub fn allocate_p2frame_with_mask(
+    mask: FreeListMask,
+    order: u32,
+    fallback: bool,
+) -> Option<(Frame, usize)> {
     let numreg = numa::number_of_memory_regions();
     if numreg == 0 {
-        return allocate_p2frame_complex(order, (), None, order, 0).map(|e| e.0);
+        return (Some((
+            allocate_p2frame_complex(order, (), None, order, 0).map(|e| e.0)?,
+            0usize,
+        )));
     }
 
     for i in 0..numreg {
@@ -85,7 +92,7 @@ pub fn allocate_p2frame_with_mask(mask: FreeListMask, order: u32, fallback: bool
             && let Some(_) = FREE_LISTS.get().unwrap().get(i)
         {
             if let Some((frame, _)) = allocate_p2frame_complex(order, (), None, order, i) {
-                return Some(frame);
+                return Some((frame, i));
             }
         }
     }
@@ -95,8 +102,8 @@ pub fn allocate_p2frame_with_mask(mask: FreeListMask, order: u32, fallback: bool
         // from nodes in the increasing order of distance from current node
         if let Some(masks) = numa::free_lists_masks() {
             for mask in masks {
-                if let Some(frame) = allocate_p2frame_with_mask(mask, order, false) {
-                    return Some(frame);
+                if let Some(frame_and_index) = allocate_p2frame_with_mask(mask, order, false) {
+                    return Some(frame_and_index);
                 }
             }
         } else {
@@ -106,8 +113,10 @@ pub fn allocate_p2frame_with_mask(mask: FreeListMask, order: u32, fallback: bool
                 if !mask.is_enabled(i)
                     && let Some(_) = FREE_LISTS.get().unwrap().get(i)
                 {
-                    if let Some((frame, _)) = allocate_p2frame_complex(order, (), None, order, i) {
-                        return Some(frame);
+                    if let Some(frame_and_index) =
+                        allocate_p2frame_complex(order, (), None, order, i)
+                    {
+                        return Some(frame_and_index);
                     }
                 }
             }
@@ -1324,13 +1333,28 @@ pub fn init_frame(init_rc: RefCount) -> Result<Frame, PfError> {
 #[derive(Debug)]
 pub struct TheFrameAllocator(pub NumaMemoryPolicy);
 
+pub struct TheFrameAllocatorOutput(PhysicalAddress, Option<&'static NumaNode>);
+
+impl rmm::FrameAllocatorOutput for TheFrameAllocatorOutput {
+    fn physical_address(&self) -> PhysicalAddress {
+        self.0
+    }
+}
+
 unsafe impl FrameAllocator for TheFrameAllocator {
-    fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
+    type O = TheFrameAllocatorOutput;
+
+    fn allocate(&mut self, count: FrameCount) -> Option<Self::O> {
         let order = count.data().next_power_of_two().trailing_zeros();
         if let Some((mask, fallback)) = numa::free_list_mask(self.0) {
-            allocate_p2frame_with_mask(mask, order, fallback).map(|f| f.base())
+            allocate_p2frame_with_mask(mask, order, fallback).map(|(f, i)| {
+                (TheFrameAllocatorOutput(f.base(), Some(numa::node_from_index(i).unwrap())))
+            })
         } else {
-            allocate_p2frame(order).map(|f| f.base())
+            Some(TheFrameAllocatorOutput(
+                allocate_p2frame(order).map(|f| f.base())?,
+                None,
+            ))
         }
     }
 

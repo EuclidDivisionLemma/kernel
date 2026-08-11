@@ -384,3 +384,7 @@ pub fn free_lists_masks() -> Option<FreeListMaskIter> {
 
     Some(iter)
 }
+
+pub fn node_from_index(index: usize) -> Option<&'static NumaNode> {
+    Some(&NUMA_NODES.get()?[NUMA_MEMORY.get()?.get(index).unwrap().node_id as usize])
+}
