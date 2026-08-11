@@ -418,7 +418,7 @@ impl UserInner {
                     PROT_READ,
                     |dst_page, flags, mapper, flusher| {
                         Grant::allocated_shared_one_page(
-                            tail_frame, dst_page, flags, mapper, flusher, is_pinned,
+                            tail_frame, dst_page, flags, mapper, flusher, is_pinned, false,
                         )
                     },
                 )?
@@ -595,7 +595,7 @@ impl UserInner {
                 move |dst_page, page_flags, mapper, flusher| {
                     let is_pinned = true;
                     Grant::allocated_shared_one_page(
-                        frame, dst_page, page_flags, mapper, flusher, is_pinned,
+                        frame, dst_page, page_flags, mapper, flusher, is_pinned, false,
                     )
                 },
             )?;
@@ -673,7 +673,7 @@ impl UserInner {
                 move |dst_page, page_flags, mapper, flusher| {
                     let is_pinned = true;
                     Grant::allocated_shared_one_page(
-                        frame, dst_page, page_flags, mapper, flusher, is_pinned,
+                        frame, dst_page, page_flags, mapper, flusher, is_pinned, false,
                     )
                 },
             )?;
@@ -1124,6 +1124,7 @@ impl UserInner {
                         &dst_addr_space,
                         mapper,
                         flusher,
+                        map.flags.contains(MapFlags::MAP_LAZY), // LOLA
                     )
                 },
             )?

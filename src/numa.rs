@@ -385,7 +385,7 @@ pub fn free_lists_masks() -> Option<FreeListMaskIter> {
     Some(iter)
 }
 
-fn node_from_pa(pa: PhysicalAddress) -> Option<&'static NumaNode> {
+pub fn node_from_pa(pa: PhysicalAddress) -> Option<&'static NumaNode> {
     let mem = NUMA_MEMORY.get()?;
     let mem = mem
         .iter()
