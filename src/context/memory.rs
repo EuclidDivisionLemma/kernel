@@ -1276,6 +1276,7 @@ impl Grant {
             mapper
                 .map_phys(page.start_address(), frame.base(), flags)
                 .ok_or(Error::new(ENOMEM))?
+                .0
                 .ignore();
 
             flusher.queue(frame, None, TlbShootdownActions::NEW_MAPPING);
@@ -1313,7 +1314,7 @@ impl Grant {
         for (i, page) in span.pages().enumerate().take(MAX_EAGER_PAGES) {
             let frame = phys.next_by(i);
             unsafe {
-                let Some(result) =
+                let Some((result, _)) =
                     mapper.map_phys(page.start_address(), frame.base(), flags.write(false))
                 else {
                     break;
@@ -1362,7 +1363,7 @@ impl Grant {
                 .store(RefCount::One.to_raw(), Ordering::Relaxed);
 
             unsafe {
-                let result = mapper
+                let (result, _) = mapper
                     .map_phys(page.start_address(), frame.base(), flags)
                     .expect("TODO: page table OOM");
                 result.ignore();
@@ -1405,7 +1406,7 @@ impl Grant {
                     .add_ref(RefKind::Cow)
                     .expect("the static zeroed frame cannot be shared!");
 
-                let Some(result) =
+                let Some((result, _)) =
                     mapper.map_phys(page.start_address(), the_frame.base(), flags.write(false))
                 else {
                     break;
@@ -1596,7 +1597,7 @@ impl Grant {
                 };
 
                 unsafe {
-                    let flush = mapper
+                    let (flush, _) = mapper
                         .map_phys(
                             dst_page.start_address(),
                             frame.base(),
@@ -1723,7 +1724,7 @@ impl Grant {
                 };
 
                 unsafe {
-                    let flush = dst_mapper
+                    let (flush, _) = dst_mapper
                         .map_phys(
                             dst_base.next_by(i).start_address(),
                             phys,
@@ -1801,7 +1802,7 @@ impl Grant {
                     } else {
                         // TODO: Omit the unnecessary subsequent add_ref call.
                         let new_frame = init_frame(RefCount::One).expect("TODO: handle OOM");
-                        let src_flush = unsafe {
+                        let (src_flush, _) = unsafe {
                             src_mapper
                                 .map_phys(src_page.start_address(), new_frame.base(), flags)
                                 .expect("TODO: handle OOM")
@@ -1877,7 +1878,7 @@ impl Grant {
                 }
             };
 
-            let Some(map_result) = (unsafe {
+            let Some((map_result, _)) = (unsafe {
                 dst_mapper.map_phys(
                     dst_page,
                     src_frame.base(),
@@ -1940,7 +1941,7 @@ impl Grant {
             let dst_mapper = dst_mapper.as_deref_mut().unwrap_or(&mut *src_mapper);
 
             // TODO: Preallocate to handle OOM?
-            let flush = unsafe {
+            let (flush, _) = unsafe {
                 dst_mapper
                     .map_phys(dst_page.start_address(), phys, flags)
                     .expect("TODO: OOM")
@@ -2504,6 +2505,7 @@ fn map_zeroed(
         mapper
             .map_phys(page.start_address(), new_frame.base(), page_flags)
             .ok_or(PfError::Oom)?
+            .0
             .ignore();
     }
 
@@ -2825,7 +2827,7 @@ fn correct_inner<'l>(
     };
 
     let new_flags = grant_flags.write(grant_flags.has_write() && allow_writable);
-    let Some(flush) = (unsafe {
+    let Some((flush, pa)) = (unsafe {
         addr_space
             .table
             .utable

@@ -335,7 +335,7 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
                 let phys = area.base.add(i * PAGE_SIZE);
                 let virt = A::phys_to_virt(phys);
                 let flags = kernel_page_flags::<A>(virt);
-                let flush = mapper
+                let (flush, _) = mapper
                     .map_phys(virt, phys, flags)
                     .expect("failed to map frame");
                 flush.ignore(); // Not the active table
@@ -352,7 +352,7 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
                 crate::kernel_executable_offsets::KERNEL_OFFSET() + i * PAGE_SIZE,
             );
             let flags = kernel_page_flags::<A>(virt);
-            let flush = mapper
+            let (flush, _) = mapper
                 .map_phys(virt, phys, flags)
                 .expect("failed to map frame");
             flush.ignore(); // Not the active table
@@ -365,7 +365,7 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
                 let phys = PhysicalAddress::new(base + i * PAGE_SIZE);
                 let virt = A::phys_to_virt(phys);
                 let flags = kernel_page_flags::<A>(virt);
-                let flush = mapper
+                let (flush, _) = mapper
                     .map_phys(virt, phys, flags)
                     .expect("failed to map frame");
                 flush.ignore(); // Not the active table
@@ -380,7 +380,7 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
                 let phys = PhysicalAddress::new(base + i * PAGE_SIZE);
                 let virt = A::phys_to_virt(phys);
                 let flags = kernel_page_flags::<A>(virt).device_memory(true);
-                let flush = mapper
+                let (flush, _) = mapper
                     .map_phys(virt, phys, flags)
                     .expect("failed to map frame");
                 flush.ignore(); // Not the active table
@@ -398,7 +398,7 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
                 let phys = PhysicalAddress::new(phys + i * PAGE_SIZE);
                 let virt = VirtualAddress::new(virt + i * PAGE_SIZE);
                 let flags = PageFlags::new().write(true).write_combining(true);
-                let flush = mapper
+                let (flush, _) = mapper
                     .map_phys(virt, phys, flags)
                     .expect("failed to map frame");
                 flush.ignore(); // Not the active table

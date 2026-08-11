@@ -17,7 +17,7 @@ unsafe fn map_heap(mapper: &mut KernelMapper<true>, offset: usize, size: usize) 
             .allocator_mut()
             .allocate_one()
             .expect("failed to allocate kernel heap");
-        let flush = unsafe {
+        let (flush, pa) = unsafe {
             mapper
                 .map_phys(
                     page.start_address(),

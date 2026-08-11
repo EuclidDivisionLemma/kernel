@@ -717,6 +717,7 @@ pub fn mremap(
                     mapper
                         .map_phys(page.start_address(), frame.base(), page_flags)
                         .ok_or(Error::new(ENOMEM))?
+                        .0
                         .ignore();
 
                     flusher.queue(frame, None, TlbShootdownActions::NEW_MAPPING);

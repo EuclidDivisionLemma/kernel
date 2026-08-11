@@ -42,7 +42,7 @@ pub(super) fn init(madt: Madt) {
         //TODO: do not have writable and executable!
         let mut mapper = KernelMapper::lock_rw();
 
-        let result = mapper
+        let (result, _) = mapper
             .map_phys(
                 trampoline_page.start_address(),
                 trampoline_frame.base(),

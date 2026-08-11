@@ -1,6 +1,6 @@
 use core::{marker::PhantomData, mem};
 
-use crate::{Arch, VirtualAddress};
+use crate::{Arch, PhysicalAddress, VirtualAddress};
 
 pub trait Flusher<A> {
     fn consume(&mut self, flush: PageFlush<A>);

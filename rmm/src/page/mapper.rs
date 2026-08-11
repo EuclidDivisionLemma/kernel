@@ -160,7 +160,7 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
         virt: VirtualAddress,
         phys: PhysicalAddress,
         flags: PageFlags<A>,
-    ) -> Option<PageFlush<A>> {
+    ) -> Option<(PageFlush<A>, PhysicalAddress)> {
         unsafe {
             //TODO: verify virt and phys are aligned
             //TODO: verify flags have correct bits
@@ -171,7 +171,7 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
                 if table.level() == 0 {
                     //TODO: check for overwriting entry
                     table.set_entry(i, entry);
-                    return Some(PageFlush::new(virt));
+                    return Some((PageFlush::new(virt), phys));
                 }
 
                 let next = match table.next(i) {
@@ -198,10 +198,11 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
         &mut self,
         phys: PhysicalAddress,
         flags: PageFlags<A>,
-    ) -> Option<(VirtualAddress, PageFlush<A>)> {
+    ) -> Option<(VirtualAddress, PageFlush<A>, PhysicalAddress)> {
         unsafe {
             let virt = A::phys_to_virt(phys);
-            self.map_phys(virt, phys, flags).map(|flush| (virt, flush))
+            self.map_phys(virt, phys, flags)
+                .map(|(flush, pa)| (virt, flush, pa))
         }
     }
 

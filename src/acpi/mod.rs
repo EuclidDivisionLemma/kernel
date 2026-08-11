@@ -42,7 +42,7 @@ unsafe fn map_linearly(
         let aligned_len = crate::memory::round_up_pages(len + (addr.data() - base.data()));
 
         for page_idx in 0..aligned_len / crate::memory::PAGE_SIZE {
-            let (_, flush) = mapper
+            let (_, flush, _) = mapper
                 .map_linearly(
                     base.add(page_idx * crate::memory::PAGE_SIZE),
                     PageFlags::new(),

@@ -337,7 +337,7 @@ pub unsafe fn map_device_memory(addr: PhysicalAddress, len: usize) -> VirtualAdd
         let base = PhysicalAddress::new(round_down_pages(addr.data()));
         let aligned_len = round_up_pages(len + (addr.data() - base.data()));
         for page_idx in 0..aligned_len / crate::memory::PAGE_SIZE {
-            let (_, flush) = mapper
+            let (_, flush, pa) = mapper
                 .map_linearly(
                     base.add(page_idx * crate::memory::PAGE_SIZE),
                     PageFlags::new().write(true).device_memory(true),
