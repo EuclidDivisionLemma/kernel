@@ -384,3 +384,18 @@ pub fn free_lists_masks() -> Option<FreeListMaskIter> {
 
     Some(iter)
 }
+
+fn node_from_pa(pa: PhysicalAddress) -> Option<&'static NumaNode> {
+    let mem = NUMA_MEMORY.get()?;
+    let mem = mem
+        .iter()
+        .find_map(|e| {
+            if pa.data() >= e.start && pa.data() < e.start + e.length {
+                Some(e)
+            } else {
+                None
+            }
+        })
+        .expect("Impossible case: PA not belonging to a memory region");
+    Some(&NUMA_NODES.get().unwrap()[mem.node_id as usize])
+}
