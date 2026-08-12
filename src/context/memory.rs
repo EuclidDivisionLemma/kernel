@@ -12,6 +12,7 @@ use core::{
     ops::{Bound, Deref},
     sync::atomic::{AtomicU32, Ordering},
 };
+use hashbrown::HashMap;
 use rmm::{Arch as _, FrameAllocator, FrameCount, PageFlush, PhysicalAddress};
 use smallvec::SmallVec;
 use syscall::{error::*, flag::MapFlags, GrantFlags, MunmapFlags, NumaMemoryPolicy};

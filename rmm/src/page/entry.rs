@@ -56,4 +56,9 @@ impl<A: Arch> PageEntry<A> {
     pub fn present(&self) -> bool {
         self.data & A::ENTRY_FLAG_PRESENT != 0
     }
+
+    #[inline(always)]
+    pub fn node_local(&self) -> bool {
+        self.data & A::NODE_LOCAL_FLAG != 0
+    }
 }

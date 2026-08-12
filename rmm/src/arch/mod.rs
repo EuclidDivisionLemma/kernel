@@ -60,6 +60,8 @@ pub trait Arch: Clone + Copy {
     const ENTRY_ADDRESS_MASK: usize = Self::ENTRY_ADDRESS_SIZE - 1; // Mask of physical address, starting at 0th bit
     const ENTRY_FLAGS_MASK: usize = !(Self::ENTRY_ADDRESS_MASK << Self::ENTRY_ADDRESS_SHIFT);
 
+    const NODE_LOCAL_FLAG: usize;
+
     #[inline(always)]
     unsafe fn read<T>(address: VirtualAddress) -> T {
         unsafe { ptr::read(address.data() as *const T) }

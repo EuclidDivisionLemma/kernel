@@ -8,6 +8,8 @@ pub struct X8664Arch;
 impl Arch for X8664Arch {
     const KERNEL_SEPARATE_TABLE: bool = false;
 
+    const NODE_LOCAL_FLAG: usize = 10;
+
     const PAGE_SHIFT: usize = 12; // 4096 bytes
     const PAGE_ENTRY_SHIFT: usize = 9; // 512 entries, 8 bytes each
     const PAGE_LEVELS: usize = 4; // PML4, PDP, PD, PT

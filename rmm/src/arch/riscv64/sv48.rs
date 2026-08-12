@@ -8,6 +8,8 @@ pub struct RiscV64Sv48Arch;
 impl Arch for RiscV64Sv48Arch {
     const KERNEL_SEPARATE_TABLE: bool = false;
 
+    const NODE_LOCAL_FLAG: usize = 8;
+
     const PAGE_SHIFT: usize = 12; // 4096 bytes
     const PAGE_ENTRY_SHIFT: usize = 9; // 512 entries, 8 bytes each
     const PAGE_LEVELS: usize = 4; // L0, L1, L2, L3
