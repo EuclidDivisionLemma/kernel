@@ -7,9 +7,11 @@ use arrayvec::ArrayVec;
 use core::{
     cmp,
     fmt::Debug,
-    mem::ManuallyDrop,
+    iter::{Cloned, Map},
+    mem::{self, ManuallyDrop},
     num::NonZeroUsize,
     ops::{Bound, Deref},
+    ptr::{self, NonNull},
     sync::atomic::{AtomicU32, Ordering},
 };
 use rmm::{Arch as _, FrameAllocator, FrameCount, PageFlush};
@@ -1171,6 +1173,29 @@ pub struct GrantInfo {
     // TODO: Rename to unmapped?
     mapped: bool,
     pub(crate) provider: Provider,
+}
+
+pub struct GrantView {
+    base: Page,
+    page_count: usize,
+    src_addrspace: Arc<AddrSpaceWrapper>,
+}
+
+impl GrantView {
+    pub unsafe fn get(&self, lock_token: &mut LockToken<L4>) -> Option<(Page, NonNull<GrantInfo>)> {
+        let addrspace = self.src_addrspace.acquire_read(lock_token.token());
+        let grant = addrspace
+            .grants
+            .conflicts(PageSpan {
+                base: self.base,
+                count: self.page_count,
+            })
+            .next()?;
+        Some((
+            grant.0,
+            NonNull::new(core::ptr::from_ref(grant.1) as *mut GrantInfo).unwrap(),
+        ))
+    }
 }
 
 /// Enumeration of various types of grants.
