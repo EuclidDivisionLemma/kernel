@@ -1192,6 +1192,7 @@ pub struct GrantInfo {
     pub(crate) provider: Provider,
 }
 
+#[derive(Clone)]
 pub struct GrantView {
     base: Page,
     page_count: usize,
@@ -1212,6 +1213,44 @@ impl GrantView {
             grant.0,
             NonNull::new(core::ptr::from_ref(grant.1) as *mut GrantInfo).unwrap(),
         ))
+    }
+}
+
+const MAX_BATCH_SIZE: usize = 10;
+
+pub struct BatchedSync {
+    batch: ArrayVec<GrantView, MAX_BATCH_SIZE>,
+}
+
+impl BatchedSync {
+    pub fn add(&mut self, grant: GrantView) -> Result<()> {
+        if self.batch.is_full() {
+            self.sync_all()?;
+        }
+        self.batch.push(grant);
+
+        Ok(())
+    }
+
+    pub fn sync_all(&self) -> Result<usize> {
+        todo!()
+    }
+
+    pub fn replace(&mut self, old: Page, new: &[GrantView]) -> Result<Option<GrantView>> {
+        let old = old.start_address().data();
+        let (old, _) = if let Some(v) = self.batch.iter().enumerate().find(|(i, e)| {
+            old >= e.base.start_address().data()
+                && old < e.base.start_address().data() + e.page_count
+        }) {
+            v
+        } else {
+            return Ok(None);
+        };
+        let old_grant = self.batch.remove(old);
+        for i in new {
+            self.add(i.clone())?;
+        }
+        Ok(Some(old_grant))
     }
 }
 
