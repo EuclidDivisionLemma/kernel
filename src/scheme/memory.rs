@@ -102,7 +102,8 @@ impl MemoryScheme {
             page_count,
             map.flags,
             Some(&mut notify_files),
-            |dst_page, mut flags, mapper, flusher| {
+            |dst_page, mut flags, flusher, addrspace| {
+                let mapper = &mut addrspace.table.utable;
                 // The memory type suffix is part of the allocation contract,
                 // not only of physical borrows. Drivers request
                 // `zeroed@uc?phys_contiguous` specifically so CPU mappings of
@@ -118,19 +119,19 @@ impl MemoryScheme {
                     Ok(Grant::zeroed_phys_contiguous(
                         span,
                         flags,
-                        mapper,
                         flusher,
                         mem_policy,
                         map.flags.contains(MapFlags::MAP_LOCAL),
+                        addrspace,
                     )?)
                 } else {
                     Ok(Grant::zeroed(
                         span,
                         flags,
-                        mapper,
                         flusher,
                         map.flags.contains(MapFlags::MAP_SHARED),
                         map.flags.contains(MapFlags::MAP_LOCAL),
+                        addrspace,
                     )?)
                 }
             },
@@ -173,7 +174,7 @@ impl MemoryScheme {
                 &current_addrsp,
                 page_count,
                 flags,
-                |dst_page, mut page_flags, dst_mapper, dst_flusher| {
+                |dst_page, mut page_flags, dst_flusher, dst_addrspace| {
                     match memory_type {
                         // Default
                         MemoryType::Writeback => (),
@@ -188,7 +189,7 @@ impl MemoryScheme {
                         Frame::containing(PhysicalAddress::new(physical_address)),
                         PageSpan::new(dst_page, page_count.get()),
                         page_flags,
-                        dst_mapper,
+                        &mut dst_addrspace.table.utable,
                         dst_flusher,
                         flags.contains(MapFlags::MAP_LOCAL),
                     )

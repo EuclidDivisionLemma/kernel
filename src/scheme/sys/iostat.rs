@@ -101,15 +101,15 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
                 &addr_space,
                 page_count,
                 MapFlags::PROT_READ | MapFlags::PROT_WRITE,
-                |page, flags, mapper, flusher| {
+                |page, flags, flusher, addrspace| {
                     let shared = false;
                     Ok(Grant::zeroed(
                         PageSpan::new(page, page_count.get()),
                         flags,
-                        mapper,
                         flusher,
                         shared,
                         false,
+                        addrspace,
                     )?)
                 },
             )?

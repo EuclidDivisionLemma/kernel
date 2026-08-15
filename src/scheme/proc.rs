@@ -557,7 +557,8 @@ impl KernelScheme for ProcScheme {
                         src_page_count,
                         map.flags,
                         Some(&mut notify_files),
-                        |dst_page, _, dst_mapper, flusher| {
+                        |dst_page, _, flusher, dst_addrspace| {
+                            let dst_mapper = &mut dst_addrspace.table.utable;
                             Grant::borrow(
                                 Arc::clone(addrspace),
                                 src_addr_space,
@@ -600,12 +601,12 @@ impl KernelScheme for ProcScheme {
                     &addrsp,
                     NonZeroUsize::new(1).unwrap(),
                     MapFlags::PROT_READ | MapFlags::PROT_WRITE,
-                    |page, flags, mapper, flusher| {
+                    |page, flags, flusher, addrspace| {
                         Grant::allocated_shared_one_page(
                             frame.get(),
                             page,
                             flags,
-                            mapper,
+                            &mut addrspace.table.utable,
                             flusher,
                             false,
                             map.flags.contains(MapFlags::MAP_LOCAL),

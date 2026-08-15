@@ -135,15 +135,15 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                     page_count,
                     flags,
                     None,
-                    |page, flags, mapper, flusher| {
+                    |page, flags, flusher, addrspace| {
                         let shared = false;
                         Ok(Grant::zeroed(
                             PageSpan::new(page, bootstrap.page_count),
                             flags,
-                            mapper,
                             flusher,
                             shared,
                             false,
+                            addrspace,
                         )?)
                     },
                 )
@@ -189,15 +189,15 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                 NonZeroUsize::new(KERNEL_METADATA_PAGE_COUNT).unwrap(),
                 MapFlags::MAP_FIXED_NOREPLACE | MapFlags::PROT_READ | MapFlags::PROT_WRITE,
                 None,
-                |page, flags, mapper, flusher| {
+                |page, flags, flusher, addrspace| {
                     let shared = false;
                     Ok(Grant::zeroed(
                         PageSpan::new(page, KERNEL_METADATA_PAGE_COUNT),
                         flags,
-                        mapper,
                         flusher,
                         shared,
                         false,
+                        addrspace,
                     )?)
                 },
             )

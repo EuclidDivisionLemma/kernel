@@ -1,6 +1,6 @@
 use alloc::{
     collections::{BTreeMap, BTreeSet},
-    sync::Arc,
+    sync::{Arc, Weak},
     vec::Vec,
 };
 use arrayvec::ArrayVec;
@@ -153,6 +153,10 @@ pub struct AddrSpace {
     /// the exception that we have a memory safe kernel which doesn't have to protect itself
     /// against null pointers, so fixed mmaps to address zero are still allowed.
     pub mmap_min: usize,
+
+    pub replicas: Vec<Weak<AddrSpaceWrapper>>,
+
+    pub batched_ops: BatchedSync,
 }
 impl AddrSpaceWrapper {
     /// Attempt to clone an existing address space so that all mappings are copied (CoW).
@@ -458,14 +462,15 @@ impl AddrSpaceWrapper {
                     dst_base.next_by(prev_grant_end.offset_from(src_span.base)),
                     hole_page_count,
                 );
-                dst.grants.insert(Grant::zeroed(
+                let grant = Grant::zeroed(
                     hole_span,
                     page_flags(new_flags),
-                    &mut dst.table.utable,
                     &mut dst_flusher,
                     false,
                     false,
-                )?);
+                    dst,
+                )?;
+                dst.grants.insert(grant);
             }
 
             let src_grants = src_opt
@@ -519,14 +524,15 @@ impl AddrSpaceWrapper {
                 dst_base.next_by(prev_grant_end.offset_from(src_span.base)),
                 new_page_count - prev_grant_end.offset_from(src_span.base),
             );
-            dst.grants.insert(Grant::zeroed(
+            let grant = Grant::zeroed(
                 last_hole_span,
                 page_flags(new_flags),
-                &mut dst.table.utable,
                 &mut dst_flusher,
                 false,
                 false,
-            )?);
+                dst,
+            )?;
+            dst.grants.insert(grant);
         }
 
         Ok(dst_base)
@@ -602,6 +608,8 @@ impl AddrSpace {
             grants: UserGrants::new(),
             table: Table { utable },
             mmap_min: MMAP_MIN_DEFAULT,
+            replicas: Vec::new(),
+            batched_ops: BatchedSync::new(),
         })
     }
     fn munmap_inner(
@@ -699,7 +707,7 @@ impl AddrSpace {
         dst_lock: &AddrSpaceWrapper,
         page_count: NonZeroUsize,
         flags: MapFlags,
-        map: impl FnOnce(Page, PageFlags<RmmA>, &mut PageMapper, &mut Flusher) -> Result<Grant>,
+        map: impl FnOnce(Page, PageFlags<RmmA>, &mut Flusher, &mut AddrSpace) -> Result<Grant>,
     ) -> Result<Page> {
         self.mmap(dst_lock, None, page_count, flags, None, map)
     }
@@ -710,7 +718,7 @@ impl AddrSpace {
         page_count: NonZeroUsize,
         flags: MapFlags,
         notify_files_out: Option<&mut UnmapVec>,
-        map: impl FnOnce(Page, PageFlags<RmmA>, &mut PageMapper, &mut Flusher) -> Result<Grant>,
+        map: impl FnOnce(Page, PageFlags<RmmA>, &mut Flusher, &mut AddrSpace) -> Result<Grant>,
     ) -> Result<Page> {
         assert_eq!(dst_lock.inner.as_mut_ptr(), self as *mut Self);
 
@@ -759,8 +767,8 @@ impl AddrSpace {
         let grant = map(
             selected_span.base,
             page_flags(flags),
-            &mut self.table.utable,
             &mut Flusher::with_cpu_set(&dst_lock.used_by, &dst_lock.tlb_ack),
+            self,
         )?;
         self.grants.insert(grant);
 
@@ -1192,16 +1200,14 @@ pub struct GrantInfo {
     pub(crate) provider: Provider,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct GrantView {
     base: Page,
     page_count: usize,
-    src_addrspace: Arc<AddrSpaceWrapper>,
 }
 
 impl GrantView {
-    pub unsafe fn get(&self, lock_token: &mut LockToken<L4>) -> Option<(Page, NonNull<GrantInfo>)> {
-        let addrspace = self.src_addrspace.acquire_read(lock_token.token());
+    pub unsafe fn get(&self, addrspace: &AddrSpace) -> Option<(Page, NonNull<GrantInfo>)> {
         let grant = addrspace
             .grants
             .conflicts(PageSpan {
@@ -1218,11 +1224,18 @@ impl GrantView {
 
 const MAX_BATCH_SIZE: usize = 10;
 
+#[derive(Debug)]
 pub struct BatchedSync {
     batch: ArrayVec<GrantView, MAX_BATCH_SIZE>,
 }
 
 impl BatchedSync {
+    pub fn new() -> Self {
+        Self {
+            batch: ArrayVec::new(),
+        }
+    }
+
     pub fn add(&mut self, grant: GrantView) -> Result<()> {
         if self.batch.is_full() {
             self.sync_all()?;
@@ -1232,8 +1245,9 @@ impl BatchedSync {
         Ok(())
     }
 
-    pub fn sync_all(&self) -> Result<usize> {
-        todo!()
+    pub fn sync_all(&mut self) -> Result<usize> {
+        self.batch.clear();
+        Ok(0)
     }
 
     pub fn replace(&mut self, old: Page, new: &[GrantView]) -> Result<Option<GrantView>> {
@@ -1423,11 +1437,12 @@ impl Grant {
     pub fn zeroed_phys_contiguous(
         span: PageSpan,
         flags: PageFlags<RmmA>,
-        mapper: &mut PageMapper,
         flusher: &mut Flusher,
         mem_policy: NumaMemoryPolicy,
         local: bool,
-    ) -> Result<Grant, Enomem> {
+        addrspace: &mut AddrSpace,
+    ) -> Result<Grant> {
+        let mapper = &mut addrspace.table.utable;
         if !span.count.is_power_of_two() {
             warn!("Attempted non-power-of-two zeroed_phys_contiguous allocation, rounding up to next power of two.");
         }
@@ -1458,6 +1473,14 @@ impl Grant {
             }
         }
 
+        if !local && !addrspace.replicas.is_empty() {
+            let grant = GrantView {
+                base: span.base,
+                page_count: span.count,
+            };
+            addrspace.batched_ops.add(grant)?;
+        }
+
         Ok(Grant {
             base: span.base,
             info: GrantInfo {
@@ -1475,11 +1498,12 @@ impl Grant {
     pub fn zeroed(
         span: PageSpan,
         flags: PageFlags<RmmA>,
-        mapper: &mut PageMapper,
         flusher: &mut Flusher,
         shared: bool,
         local: bool,
-    ) -> Result<Grant, Enomem> {
+        addrspace: &mut AddrSpace,
+    ) -> Result<Grant> {
+        let mapper = &mut addrspace.table.utable;
         const MAX_EAGER_PAGES: usize = 16;
 
         let (the_frame, the_frame_info) = the_zeroed_frame();
@@ -1502,6 +1526,14 @@ impl Grant {
                 result.ignore();
                 flusher.queue(the_frame, None, TlbShootdownActions::NEW_MAPPING);
             }
+        }
+
+        if !local && !addrspace.replicas.is_empty() {
+            let grant = GrantView {
+                base: span.base,
+                page_count: span.count,
+            };
+            addrspace.batched_ops.add(grant)?;
         }
 
         Ok(Grant {

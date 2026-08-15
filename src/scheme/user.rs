@@ -416,9 +416,15 @@ impl UserInner {
                     &dst_addr_space,
                     ONE,
                     PROT_READ,
-                    |dst_page, flags, mapper, flusher| {
+                    |dst_page, flags, flusher, addrspace| {
                         Grant::allocated_shared_one_page(
-                            tail_frame, dst_page, flags, mapper, flusher, is_pinned, false,
+                            tail_frame,
+                            dst_page,
+                            flags,
+                            &mut addrspace.table.utable,
+                            flusher,
+                            is_pinned,
+                            false,
                         )
                     },
                 )?
@@ -592,7 +598,8 @@ impl UserInner {
                 ONE,
                 map_flags | MAP_FIXED_NOREPLACE,
                 None,
-                move |dst_page, page_flags, mapper, flusher| {
+                move |dst_page, page_flags, flusher, addrspace| {
+                    let mapper = &mut addrspace.table.utable;
                     let is_pinned = true;
                     Grant::allocated_shared_one_page(
                         frame, dst_page, page_flags, mapper, flusher, is_pinned, false,
@@ -623,7 +630,8 @@ impl UserInner {
                 middle_page_count,
                 map_flags | MAP_FIXED_NOREPLACE,
                 None,
-                move |dst_page, _, mapper, flusher| {
+                move |dst_page, _, flusher, addrspace| {
+                    let mapper = &mut addrspace.table.utable;
                     let eager = true;
 
                     // It doesn't make sense to allow a context, that has borrowed non-RAM physical
@@ -670,7 +678,8 @@ impl UserInner {
                 ONE,
                 map_flags | MAP_FIXED_NOREPLACE,
                 None,
-                move |dst_page, page_flags, mapper, flusher| {
+                move |dst_page, page_flags, flusher, addrspace| {
+                    let mapper = &mut addrspace.table.utable;
                     let is_pinned = true;
                     Grant::allocated_shared_one_page(
                         frame, dst_page, page_flags, mapper, flusher, is_pinned, false,
@@ -1115,7 +1124,8 @@ impl UserInner {
                 page_count_nz,
                 map.flags,
                 Some(&mut notify_files),
-                |dst_base, flags, mapper, flusher| {
+                |dst_base, flags, flusher, addrspace| {
+                    let mapper = &mut addrspace.table.utable;
                     Grant::borrow_fmap(
                         PageSpan::new(dst_base, page_count),
                         flags,

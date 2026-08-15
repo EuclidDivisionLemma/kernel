@@ -709,7 +709,8 @@ pub fn mremap(
             NonZeroUsize::new(1).expect("value specified is not zero"),
             map_flags,
             None,
-            |page, page_flags, mapper, flusher| {
+            |page, page_flags, flusher, addrspace| {
+                let mapper = &mut addrspace.table.utable;
                 let frame = raii_frame.take();
                 // XXX: add_ref(RefKind::Shared) is internally done by borrow_frame_enforce_rw_allocated(src_span.base).
                 // The page does not get unref-ed as we call take() on the `raii_frame`.
