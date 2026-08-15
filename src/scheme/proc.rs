@@ -855,6 +855,15 @@ impl KernelScheme for ProcScheme {
                         b"exclusive" => ContextHandle::AddrSpace {
                             addrspace: addrspace.try_clone(token)?,
                         },
+                        b"replica" => {
+                            let replica = addrspace.try_clone(token)?;
+                            let handle = ContextHandle::AddrSpace {
+                                addrspace: replica.clone(),
+                            };
+                            let mut addrspace = addrspace.acquire_write(token.downgrade());
+                            addrspace.replicas.push(Arc::downgrade(&replica));
+                            handle
+                        }
                         b"mmap-min-addr" => ContextHandle::MmapMinAddr(Arc::clone(addrspace)),
 
                         _ if buf.starts_with(GRANT_FD_PREFIX) => {
