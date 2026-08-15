@@ -116,7 +116,12 @@ impl MemoryScheme {
                 let span = PageSpan::new(dst_page, page_count.get());
                 if is_phys_contiguous {
                     Ok(Grant::zeroed_phys_contiguous(
-                        span, flags, mapper, flusher, mem_policy,
+                        span,
+                        flags,
+                        mapper,
+                        flusher,
+                        mem_policy,
+                        map.flags.contains(MapFlags::MAP_LOCAL),
                     )?)
                 } else {
                     Ok(Grant::zeroed(
@@ -125,6 +130,7 @@ impl MemoryScheme {
                         mapper,
                         flusher,
                         map.flags.contains(MapFlags::MAP_SHARED),
+                        map.flags.contains(MapFlags::MAP_LOCAL),
                     )?)
                 }
             },
@@ -184,6 +190,7 @@ impl MemoryScheme {
                         page_flags,
                         dst_mapper,
                         dst_flusher,
+                        flags.contains(MapFlags::MAP_LOCAL),
                     )
                 },
             )?;

@@ -143,6 +143,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                             mapper,
                             flusher,
                             shared,
+                            false,
                         )?)
                     },
                 )
@@ -196,6 +197,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                         mapper,
                         flusher,
                         shared,
+                        false,
                     )?)
                 },
             )

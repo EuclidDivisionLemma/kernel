@@ -608,6 +608,7 @@ impl KernelScheme for ProcScheme {
                             mapper,
                             flusher,
                             false,
+                            map.flags.contains(MapFlags::MAP_LOCAL),
                         )
                     },
                 )?;

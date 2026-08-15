@@ -109,6 +109,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
                         mapper,
                         flusher,
                         shared,
+                        false,
                     )?)
                 },
             )?

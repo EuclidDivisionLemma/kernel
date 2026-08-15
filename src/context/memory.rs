@@ -14,7 +14,7 @@ use core::{
     ptr::{self, NonNull},
     sync::atomic::{AtomicU32, Ordering},
 };
-use rmm::{Arch as _, FrameAllocator, FrameCount, PageFlush};
+use rmm::{Arch as _, FrameAllocator, FrameCount, PageFlush, PhysicalAddress};
 use smallvec::SmallVec;
 use syscall::{error::*, flag::MapFlags, GrantFlags, MunmapFlags, NumaMemoryPolicy};
 
@@ -26,7 +26,7 @@ use crate::{
         Page, PageFlags, PageInfo, PageMapper, RaiiFrame, RefCount, RefKind, RmmA, TableKind,
         TheFrameAllocator, VirtualAddress, PAGE_SIZE,
     },
-    numa,
+    numa::{self, NumaNode},
     percpu::PercpuBlock,
     scheme::{self, KernelSchemes},
     sync::{
@@ -194,6 +194,7 @@ impl AddrSpaceWrapper {
                     grant_info.flags,
                     &mut new.inner.get_mut().table.utable,
                     &mut NopFlusher,
+                    grant_info.local,
                 )?,
                 Provider::Allocated {
                     ref cow_file_ref,
@@ -210,6 +211,7 @@ impl AddrSpaceWrapper {
                     CopyMappingsMode::Owned {
                         cow_file_ref: cow_file_ref.clone(),
                     },
+                    grant_info.local,
                 )?,
                 // TODO: Merge Allocated and AllocatedShared, and make CopyMappingsMode a field?
                 Provider::AllocatedShared {
@@ -224,6 +226,7 @@ impl AddrSpaceWrapper {
                     &mut this_flusher,
                     &mut NopFlusher,
                     CopyMappingsMode::Borrowed,
+                    grant_info.local,
                 )?,
 
                 // MAP_SHARED grants are retained by reference, across address space clones (the
@@ -461,6 +464,7 @@ impl AddrSpaceWrapper {
                     &mut dst.table.utable,
                     &mut dst_flusher,
                     false,
+                    false,
                 )?);
             }
 
@@ -520,6 +524,7 @@ impl AddrSpaceWrapper {
                 page_flags(new_flags),
                 &mut dst.table.utable,
                 &mut dst_flusher,
+                false,
                 false,
             )?);
         }
@@ -1172,6 +1177,18 @@ pub struct GrantInfo {
     flags: PageFlags<RmmA>,
     // TODO: Rename to unmapped?
     mapped: bool,
+
+    /// Individual mappings can be marked as local. Mappings that are global must be
+    /// synchronised across NUMA nodes. Local mappings, however, exist independently
+    /// of each other. Local mappings share the same virtual memory region, but they have
+    /// different physical addresses on each node. This means that they need not be
+    /// synchronised.
+    ///
+    /// Physical frames that belong to a local mapping shall not be migrated or replicated.
+    /// Those that belong to a global mapping can be migrated or replicated based on
+    /// memory access patterns, but each of those replicas must be kept in sync.
+    local: bool,
+
     pub(crate) provider: Provider,
 }
 
@@ -1265,6 +1282,7 @@ impl Grant {
                 page_count: 1,
                 flags,
                 mapped: true,
+                local: false,
                 provider: Provider::Allocated {
                     cow_file_ref: None,
                     phys_contiguous: false,
@@ -1281,6 +1299,7 @@ impl Grant {
         mapper: &mut PageMapper,
         flusher: &mut Flusher,
         is_pinned: bool,
+        local: bool,
     ) -> Result<Grant> {
         let info = get_page_info(frame).expect("needs page info");
 
@@ -1312,6 +1331,7 @@ impl Grant {
                 page_count: 1,
                 flags,
                 mapped: true,
+                local,
                 provider: Provider::AllocatedShared {
                     is_pinned_userscheme_borrow: is_pinned,
                 },
@@ -1325,6 +1345,7 @@ impl Grant {
         flags: PageFlags<RmmA>,
         mapper: &mut PageMapper,
         flusher: &mut impl GenericFlusher,
+        local: bool,
     ) -> Result<Grant> {
         const MAX_EAGER_PAGES: usize = 4096;
 
@@ -1354,6 +1375,7 @@ impl Grant {
             info: GrantInfo {
                 page_count: span.count,
                 flags,
+                local,
                 mapped: true,
                 provider: Provider::PhysBorrowed { base: phys },
             },
@@ -1365,6 +1387,7 @@ impl Grant {
         mapper: &mut PageMapper,
         flusher: &mut Flusher,
         mem_policy: NumaMemoryPolicy,
+        local: bool,
     ) -> Result<Grant, Enomem> {
         if !span.count.is_power_of_two() {
             warn!("Attempted non-power-of-two zeroed_phys_contiguous allocation, rounding up to next power of two.");
@@ -1402,6 +1425,7 @@ impl Grant {
                 page_count: span.count,
                 flags,
                 mapped: true,
+                local,
                 provider: Provider::Allocated {
                     cow_file_ref: None,
                     phys_contiguous: true,
@@ -1415,6 +1439,7 @@ impl Grant {
         mapper: &mut PageMapper,
         flusher: &mut Flusher,
         shared: bool,
+        local: bool,
     ) -> Result<Grant, Enomem> {
         const MAX_EAGER_PAGES: usize = 16;
 
@@ -1446,6 +1471,7 @@ impl Grant {
                 page_count: span.count,
                 flags,
                 mapped: true,
+                local,
                 provider: if shared {
                     Provider::AllocatedShared {
                         is_pinned_userscheme_borrow: false,
@@ -1477,6 +1503,7 @@ impl Grant {
                 page_count: src_info.page_count,
                 flags: src_info.flags,
                 mapped: true,
+                local: src_info.local,
                 provider: Provider::External {
                     src_base,
                     address_space: src_address_space_lock,
@@ -1494,6 +1521,7 @@ impl Grant {
         _lock: &AddrSpaceWrapper,
         mapper: &mut PageMapper,
         flusher: &mut Flusher,
+        local: bool,
     ) -> Result<Self> {
         if let Some(src) = src {
             let mut guard = src.addr_space_guard;
@@ -1647,6 +1675,7 @@ impl Grant {
             info: GrantInfo {
                 page_count: span.count,
                 mapped: true,
+                local,
                 flags: new_flags,
                 provider: Provider::FmapBorrowed {
                     file_ref,
@@ -1681,6 +1710,10 @@ impl Grant {
         let mut prev_span = None;
 
         for (src_grant_base, src_grant) in src_address_space.grants.conflicts_mut(src_span) {
+            if src_grant.local {
+                return Err(Error::new(EPERM));
+            }
+
             let grant_span = PageSpan::new(src_grant_base, src_grant.page_count);
             let prev_span = prev_span.replace(grant_span);
 
@@ -1772,6 +1805,7 @@ impl Grant {
                 page_count,
                 flags,
                 mapped: true,
+                local: false,
                 provider: Provider::External {
                     address_space: src_address_space_lock,
                     src_base,
@@ -1790,6 +1824,7 @@ impl Grant {
         src_flusher: &mut Flusher,
         dst_flusher: &mut impl GenericFlusher,
         mode: CopyMappingsMode,
+        local: bool,
     ) -> Result<Grant, Enomem> {
         let (allows_writable, rk) = match mode {
             CopyMappingsMode::Owned { .. } => (false, RefKind::Cow),
@@ -1924,6 +1959,7 @@ impl Grant {
                 page_count,
                 flags,
                 mapped: true,
+                local,
                 provider: match mode {
                     CopyMappingsMode::Owned { cow_file_ref } => Provider::Allocated {
                         cow_file_ref,
@@ -2162,6 +2198,7 @@ impl Grant {
             info: GrantInfo {
                 flags: self.info.flags,
                 mapped: self.info.mapped,
+                local: self.info.local,
                 page_count: span.count,
                 provider: match self.info.provider {
                     Provider::External {
@@ -2215,6 +2252,7 @@ impl Grant {
                 flags: self.info.flags,
                 mapped: self.info.mapped,
                 page_count: span.count,
+                local: self.info.local,
                 provider: match self.info.provider {
                     Provider::Allocated {
                         cow_file_ref: None, ..
