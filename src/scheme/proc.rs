@@ -8,7 +8,7 @@ use crate::{
     },
     cpu_id,
     memory::{Page, VirtualAddress, PAGE_SIZE},
-    ptrace,
+    numa, ptrace,
     scheme::{
         self,
         memory::{MemoryScheme, MemoryType},
@@ -851,8 +851,20 @@ impl KernelScheme for ProcScheme {
                             addrspace: AddrSpaceWrapper::new()?,
                         },
                         b"exclusive" => ContextHandle::AddrSpace {
-                            addrspace: addrspace.try_clone(token)?,
+                            addrspace: addrspace.try_clone(true, None, &mut token.downgrade())?,
                         },
+                        b"replica" => {
+                            if !numa::is_supported() {
+                                return Err(Error::new(EOPNOTSUPP));
+                            }
+                            ContextHandle::AddrSpace {
+                                addrspace: addrspace.try_clone(
+                                    false,
+                                    None,
+                                    &mut token.downgrade(),
+                                )?,
+                            }
+                        }
                         b"mmap-min-addr" => ContextHandle::MmapMinAddr(Arc::clone(addrspace)),
 
                         _ if buf.starts_with(GRANT_FD_PREFIX) => {
@@ -1700,24 +1712,71 @@ impl ContextHandle {
                 }
             }
             ContextHandle::AddrSpace { addrspace } => {
-                let op = syscall::flag::NumaVerb::try_from_raw(
-                    *metadata.get(0).ok_or(Error::new(EINVAL))?,
-                )
-                .ok_or(Error::new(EINVAL))?;
+                let m0 = *metadata.get(0).ok_or(Error::new(EINVAL))?;
+                if let Some(op) = syscall::flag::NumaVerb::try_from_raw(m0) {
+                    let NumaVerb::MemPolicy = op;
 
-                let NumaVerb::MemPolicy = op;
+                    if flags.contains(CallFlags::WRITE) {
+                        let mut addrspace = addrspace.acquire_write(token.downgrade());
+                        addrspace.table.utable.allocator_mut().0 =
+                            NumaMemoryPolicy::try_from(unsafe { payload.read_exact::<u64>()? })?;
+                    }
+                    if flags.contains(CallFlags::READ) {
+                        let addrspace = addrspace.acquire_read(token.downgrade());
+                        let mem_policy =
+                            (addrspace.table.utable.allocator().0 as u32).to_ne_bytes();
+                        payload.copy_from_slice(&mem_policy)?;
+                    }
+                    return Ok(0);
+                }
 
-                if flags.contains(CallFlags::WRITE) {
-                    let mut addrspace = addrspace.acquire_write(token.downgrade());
-                    addrspace.table.utable.allocator_mut().0 =
-                        NumaMemoryPolicy::try_from(unsafe { payload.read_exact::<u64>()? })?;
+                if let Some(op) = syscall::flag::AddrSpaceVerb::try_from_raw(m0 as u8)
+                    && let AddrSpaceVerb::ReplicateFrom = op
+                {
+                    if !numa::is_supported() {
+                        return Err(Error::new(EOPNOTSUPP));
+                    }
+
+                    let src_fd = payload.read_usize()?;
+                    let (scheme, number) = extract_scheme_number(src_fd, token)?;
+                    verify_scheme(scheme)?;
+                    let mut handles = HANDLES.read(token.token());
+                    let (handles, mut token) = handles.token_split();
+                    let handle = handles.get(&number).ok_or(Error::new(EBADF))?;
+                    let ContextHandle::AddrSpace {
+                        addrspace: ref src_addrspace,
+                    } = handle.kind
+                    else {
+                        return Err(Error::new(EBADF));
+                    };
+
+                    if addrspace.tlb_ack.load(Ordering::Relaxed) != 0 {
+                        return Err(Error::new(EINVAL));
+                    }
+
+                    {
+                        let dst_addrspace = addrspace.acquire_write(token.downgrade());
+                        if !dst_addrspace.grants.is_empty() {
+                            return Err(Error::new(EINVAL));
+                        }
+                    }
+
+                    let mem_policy = NumaMemoryPolicy::try_from(unsafe {
+                        payload
+                            .advance(size_of::<usize>())
+                            .ok_or(Error::new(EINVAL))?
+                            .read_exact::<usize>()?
+                    } as u64)?;
+                    let mut new =
+                        addrspace.try_clone(false, Some(mem_policy), &mut token.downgrade())?;
+                    let new = Arc::into_inner(new).unwrap().inner.into_inner();
+
+                    let mut dst_addrspace = addrspace.acquire_write(token.downgrade());
+                    *dst_addrspace = new;
+                    return Ok(0);
                 }
-                if flags.contains(CallFlags::READ) {
-                    let addrspace = addrspace.acquire_read(token.downgrade());
-                    let mem_policy = (addrspace.table.utable.allocator().0 as u32).to_ne_bytes();
-                    payload.copy_from_slice(&mem_policy)?;
-                }
-                Ok(0)
+
+                Err(Error::new(EINVAL))
             }
             _ => Err(Error::new(EBADF)),
         }
