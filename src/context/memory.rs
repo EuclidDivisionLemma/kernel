@@ -153,16 +153,34 @@ pub struct AddrSpace {
     pub mmap_min: usize,
 }
 impl AddrSpaceWrapper {
-    /// Attempt to clone an existing address space so that all mappings are copied (CoW).
-    pub fn try_clone(&self, token: &mut CleanLockToken) -> Result<Arc<AddrSpaceWrapper>> {
+    /// Attemps to clone the address space, including the page table and grants
+    /// and optionally allowing lazy copying of data.
+    ///
+    /// The 🐮 (`cow`) argument specifies whether the pages of the grants belonging to parent
+    /// address space should be copied on write. If this is `false`, then only page tables
+    /// and grants are copied, but not the underlying pages, even if a write is attempted.
+    ///
+    /// `cow: false` is intended to be used for process creation. (Think of `fork`).
+    ///
+    /// `cow: true` is intended to be used for thread creation that will
+    /// later be pinned to a NUMA node.
+    pub fn try_clone(
+        &self,
+        cow: bool,
+        mem_policy: Option<NumaMemoryPolicy>,
+        token: &mut LockToken<L4>,
+    ) -> Result<Arc<AddrSpaceWrapper>> {
         let mut token = token.token();
-        let mut guard = self.acquire_write(token.downgrade());
+        let mut guard = self.acquire_write(token);
         let guard = &mut *guard;
 
         let mut new_arc = AddrSpaceWrapper::new()?;
 
         let new =
             Arc::get_mut(&mut new_arc).expect("expected new address space Arc not to be aliased");
+
+        new.inner.get_mut().table.utable.allocator_mut().0 =
+            mem_policy.unwrap_or(guard.table.utable.allocator().0);
 
         let _this_mapper = &mut guard.table.utable;
         let this_mapper = &mut guard.table.utable;
@@ -178,7 +196,24 @@ impl AddrSpaceWrapper {
                 | Provider::AllocatedShared {
                     is_pinned_userscheme_borrow: true,
                     ..
-                } => continue,
+                } => {
+                    if !cow {
+                        Grant::copy_mappings(
+                            grant_base,
+                            grant_base,
+                            grant_info.page_count,
+                            grant_info.flags,
+                            this_mapper,
+                            &mut new.inner.get_mut().table.utable,
+                            &mut this_flusher,
+                            &mut NopFlusher,
+                            CopyMappingsMode::Borrowed,
+                            cow,
+                        )?
+                    } else {
+                        continue;
+                    }
+                }
 
                 // No, physically contiguous driver memory won't either.
                 Provider::Allocated {
@@ -196,19 +231,26 @@ impl AddrSpaceWrapper {
                 Provider::Allocated {
                     ref cow_file_ref,
                     phys_contiguous: false,
-                } => Grant::copy_mappings(
-                    grant_base,
-                    grant_base,
-                    grant_info.page_count,
-                    grant_info.flags,
-                    this_mapper,
-                    &mut new.inner.get_mut().table.utable,
-                    &mut this_flusher,
-                    &mut NopFlusher,
-                    CopyMappingsMode::Owned {
-                        cow_file_ref: cow_file_ref.clone(),
-                    },
-                )?,
+                } => {
+                    if cow {
+                        Grant::copy_mappings(
+                            grant_base,
+                            grant_base,
+                            grant_info.page_count,
+                            grant_info.flags,
+                            this_mapper,
+                            &mut new.inner.get_mut().table.utable,
+                            &mut this_flusher,
+                            &mut NopFlusher,
+                            CopyMappingsMode::Owned {
+                                cow_file_ref: cow_file_ref.clone(),
+                            },
+                            true,
+                        )?
+                    } else {
+                        continue;
+                    }
+                }
                 // TODO: Merge Allocated and AllocatedShared, and make CopyMappingsMode a field?
                 Provider::AllocatedShared {
                     is_pinned_userscheme_borrow: false,
@@ -222,6 +264,7 @@ impl AddrSpaceWrapper {
                     &mut this_flusher,
                     &mut NopFlusher,
                     CopyMappingsMode::Borrowed,
+                    cow,
                 )?,
 
                 // MAP_SHARED grants are retained by reference, across address space clones (the
@@ -1765,9 +1808,10 @@ impl Grant {
         src_flusher: &mut Flusher,
         dst_flusher: &mut impl GenericFlusher,
         mode: CopyMappingsMode,
+        cow: bool,
     ) -> Result<Grant, Enomem> {
         let (allows_writable, rk) = match mode {
-            CopyMappingsMode::Owned { .. } => (false, RefKind::Cow),
+            CopyMappingsMode::Owned { .. } => (false || !cow, RefKind::Cow),
             CopyMappingsMode::Borrowed => (true, RefKind::Shared),
         };
 
@@ -1778,22 +1822,21 @@ impl Grant {
 
             let src_frame = match rk {
                 RefKind::Cow => {
-                    let Some((_, phys, flush)) = (unsafe {
-                        src_mapper.remap_with(src_page.start_address(), |flags| flags.write(false))
-                    }) else {
-                        // Page is not mapped, let the page fault handler take care of that (initializing
-                        // it to zero).
-                        //
-                        // TODO: If eager, allocate zeroed page if writable, or use *the* zeroed page (also
-                        // for read-only)?
+                    if cow
+                        && let Some((_, phys, flush)) = unsafe {
+                            src_mapper
+                                .remap_with(src_page.start_address(), |flags| flags.write(false))
+                        }
+                    {
+                        unsafe {
+                            flush.ignore();
+                        }
+                        let frame = Frame::containing(phys);
+                        src_flusher.queue(frame, None, TlbShootdownActions::REVOKE_WRITE);
+                        frame
+                    } else {
                         continue;
-                    };
-                    unsafe {
-                        flush.ignore();
                     }
-                    let frame = Frame::containing(phys);
-                    src_flusher.queue(frame, None, TlbShootdownActions::REVOKE_WRITE);
-                    frame
                 }
                 RefKind::Shared => {
                     if let Some((phys, _)) = src_mapper.translate(src_page.start_address()) {
@@ -1826,7 +1869,7 @@ impl Grant {
                         let CowResult {
                             new_frame,
                             old_frame,
-                        } = cow(src_frame, src_page_info, rk).map_err(|_| Enomem)?;
+                        } = self::cow(src_frame, src_page_info, rk).map_err(|_| Enomem)?;
                         if let Some(old_frame) = old_frame {
                             src_flusher.queue(old_frame, None, TlbShootdownActions::FREE);
                         }
@@ -1867,7 +1910,7 @@ impl Grant {
                         let CowResult {
                             new_frame,
                             old_frame,
-                        } = cow(src_frame, src_page_info, rk).map_err(|_| Enomem)?;
+                        } = self::cow(src_frame, src_page_info, rk).map_err(|_| Enomem)?;
                         if let Some(old_frame) = old_frame {
                             src_flusher.queue(old_frame, None, TlbShootdownActions::FREE);
                         }
