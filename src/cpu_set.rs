@@ -1,6 +1,6 @@
 use core::{
     fmt::Display,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicU8, Ordering},
 };
 
 use crate::CPU_COUNT;
@@ -47,25 +47,25 @@ pub const MAX_CPU_COUNT: u32 = 128;
 #[cfg(target_pointer_width = "32")]
 pub const MAX_CPU_COUNT: u32 = 32;
 
-const SET_WORDS: usize = (MAX_CPU_COUNT / usize::BITS) as usize;
+const SET_WORDS: usize = (MAX_CPU_COUNT / u8::BITS) as usize;
 
 // TODO: Support more than 128 CPUs.
 // The maximum number of CPUs on Linux is configurable, and the type for LogicalCpuSet and
 // LogicalCpuId may be optimized accordingly. In that case, box the mask if it's larger than some
 // base size (probably 256 bytes).
 #[derive(Debug)]
-pub struct LogicalCpuSet([AtomicUsize; SET_WORDS]);
+pub struct LogicalCpuSet([AtomicU8; SET_WORDS]);
 
 fn parts(id: LogicalCpuId) -> (usize, u32) {
-    ((id.get() / usize::BITS) as usize, id.get() % usize::BITS)
+    ((id.get() / u8::BITS) as usize, id.get() % u8::BITS)
 }
 impl LogicalCpuSet {
     pub const fn empty() -> Self {
-        Self([const { AtomicUsize::new(0) }; SET_WORDS])
+        Self([const { AtomicU8::new(0) }; SET_WORDS])
     }
 
     pub const fn all() -> Self {
-        Self([const { AtomicUsize::new(!0) }; SET_WORDS])
+        Self([const { AtomicU8::new(!0) }; SET_WORDS])
     }
 
     pub fn contains(&self, id: LogicalCpuId) -> bool {
@@ -84,7 +84,7 @@ impl LogicalCpuSet {
     }
 
     pub fn override_from(&mut self, raw: &RawMask) {
-        self.0 = raw.map(AtomicUsize::new);
+        self.0 = raw.map(AtomicU8::new);
     }
 
     pub fn to_raw(&self) -> RawMask {
@@ -93,9 +93,9 @@ impl LogicalCpuSet {
 
     pub fn iter(&self) -> impl Iterator<Item = LogicalCpuId> + '_ {
         self.0.iter().enumerate().flat_map(move |(i, w)| {
-            (0..usize::BITS).filter_map(move |b| {
+            (0..u8::BITS).filter_map(move |b| {
                 if w.load(Ordering::Acquire) & (1 << b) != 0 {
-                    Some(LogicalCpuId::new(i as u32 * usize::BITS + b))
+                    Some(LogicalCpuId::new(i as u32 * u8::BITS + b))
                 } else {
                     None
                 }
@@ -110,14 +110,14 @@ impl Display for LogicalCpuSet {
 
         let raw = self.to_raw();
         let words = raw
-            .get(..cpu_count.div_ceil(usize::BITS) as usize)
+            .get(..cpu_count.div_ceil(u8::BITS) as usize)
             .unwrap_or(&[]);
         for (i, word) in words.iter().enumerate() {
             if i != 0 {
                 write!(f, "_")?;
             }
             let word = if i == words.len() - 1 {
-                *word & ((1_usize << (cpu_count % usize::BITS)) - 1)
+                *word & ((1u8 << (cpu_count % u8::BITS)) - 1)
             } else {
                 *word
             };
@@ -127,7 +127,7 @@ impl Display for LogicalCpuSet {
     }
 }
 
-pub type RawMask = [usize; SET_WORDS];
+pub type RawMask = [u8; SET_WORDS];
 
 pub fn mask_as_bytes(mask: &RawMask) -> &[u8] {
     unsafe { core::slice::from_raw_parts(mask.as_ptr().cast(), size_of::<RawMask>()) }
