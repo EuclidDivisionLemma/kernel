@@ -18,18 +18,10 @@ use smallvec::SmallVec;
 use syscall::{error::*, flag::MapFlags, GrantFlags, MunmapFlags, NumaMemoryPolicy};
 
 use crate::{
-    context::file::LockedFileDescription,
-    cpu_set::LogicalCpuSet,
-    memory::{
-        deallocate_contiguous, deallocate_frame, get_page_info, init_frame, the_zeroed_frame,
-        AddRefError, Enomem, Frame, Page, PageFlags, PageInfo, PageMapper, RaiiFrame, RefCount,
-        RefKind, RmmA, TableKind, TheFrameAllocator, VirtualAddress, PAGE_SIZE,
-    },
-    percpu::PercpuBlock,
-    scheme::KernelSchemes,
-    sync::{
-        CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockUpgradableGuard,
-        RwLockWriteGuard, L4, L5,
+    context::file::LockedFileDescription, cpu_set::LogicalCpuSet, memory::{
+        AddRefError, Enomem, Frame, PAGE_SIZE, Page, PageFlags, PageInfo, PageMapper, RaiiFrame, RefCount, RefKind, RmmA, TableKind, TheFrameAllocator, VirtualAddress, deallocate_contiguous, deallocate_frame, get_page_info, init_frame, the_zeroed_frame,
+    }, numa::{self, NumaNodeID}, percpu::PercpuBlock, scheme::KernelSchemes, sync::{
+        CleanLockToken, L4, L5, LockToken, RwLock, RwLockReadGuard, RwLockUpgradableGuard, RwLockWriteGuard,
     },
 };
 
@@ -1189,7 +1181,7 @@ pub struct GrantInfo {
     mapped: bool,
 
     /// The page table in which the mapping was originally created.
-    owner: usize,
+    owner: Option<NumaNodeID>,
 
     pub(crate) provider: Provider,
 }
@@ -1265,7 +1257,7 @@ impl Grant {
                     cow_file_ref: None,
                     phys_contiguous: false,
                 },
-                owner: numa::current_node_id().unwrap_or(0) as usize,
+                owner: numa::current_node_id(),
             },
         }
     }
@@ -1312,7 +1304,7 @@ impl Grant {
                 provider: Provider::AllocatedShared {
                     is_pinned_userscheme_borrow: is_pinned,
                 },
-                owner: numa::current_node_id().unwrap_or(0) as usize,
+                owner: numa::current_node_id(),
             },
         })
     }
@@ -1354,7 +1346,7 @@ impl Grant {
                 flags,
                 mapped: true,
                 provider: Provider::PhysBorrowed { base: phys },
-                owner: numa::current_node_id().unwrap_or(0) as usize,
+                owner: numa::current_node_id(),
             },
         })
     }
@@ -1400,7 +1392,7 @@ impl Grant {
                     cow_file_ref: None,
                     phys_contiguous: true,
                 },
-                owner: numa::current_node_id().unwrap_or(0) as usize,
+                owner: numa::current_node_id(),
             },
         })
     }
@@ -1454,7 +1446,7 @@ impl Grant {
                         phys_contiguous: false,
                     }
                 },
-                owner: numa::current_node_id().unwrap_or(0) as usize,
+                owner: numa::current_node_id(),
             },
         })
     }
@@ -1481,7 +1473,7 @@ impl Grant {
                     address_space: src_address_space_lock,
                     is_pinned_userscheme_borrow: false,
                 },
-                owner: numa::current_node_id().unwrap_or(0) as usize,
+                owner: numa::current_node_id(),
             },
         })
     }
@@ -1653,7 +1645,7 @@ impl Grant {
                     file_ref,
                     pin_refcount: 0,
                 },
-                owner: numa::current_node_id().unwrap_or(0) as usize,
+                owner: numa::current_node_id(),
             },
         })
     }
@@ -1780,7 +1772,7 @@ impl Grant {
                     src_base,
                     is_pinned_userscheme_borrow,
                 },
-                owner: numa::current_node_id().unwrap_or(0) as usize,
+                owner: numa::current_node_id(),
             },
         })
     }
@@ -1941,7 +1933,7 @@ impl Grant {
                         is_pinned_userscheme_borrow: false,
                     },
                 },
-                owner: numa::current_node_id().unwrap_or(0) as usize,
+                owner: numa::current_node_id(),
             },
         })
     }
@@ -2207,7 +2199,7 @@ impl Grant {
                         pin_refcount: 0,
                     },
                 },
-                owner: numa::current_node_id().unwrap_or(0) as usize,
+                owner: numa::current_node_id(),
             },
         });
 
@@ -2276,7 +2268,7 @@ impl Grant {
                         pin_refcount: 0,
                     },
                 },
-                owner: numa::current_node_id().unwrap_or(0) as usize,
+                owner: numa::current_node_id(),
             },
         });
 
